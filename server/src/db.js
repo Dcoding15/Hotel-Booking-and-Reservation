@@ -155,6 +155,7 @@ export function mapBooking(row) {
     nights: row.nights,
     totalCents: row.total_cents,
     status: row.status,
+    hasPaymentOrder: Boolean(row.payment_order_id),
     cancelledAt: row.cancelled_at,
     refundCents: row.refund_cents,
     paymentStatus: row.payment_id ? 'paid' : row.status === 'pending' ? 'pending' : 'unpaid',

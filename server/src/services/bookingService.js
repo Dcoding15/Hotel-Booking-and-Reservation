@@ -9,6 +9,7 @@ import {
   captureRazorpayPayment,
   createRazorpayOrder,
   createRazorpayRefund,
+  fetchRazorpayOrderPayments,
   fetchRazorpayPayment,
   getRazorpayConfig,
   paymentMatchesBooking,
@@ -38,7 +39,7 @@ function bookingDates({ roomId, checkIn, checkOut }) {
   };
 }
 
-export async function reserveBooking({ userId, roomId, checkIn, checkOut }) {
+export async function createPendingBooking({ userId, roomId, checkIn, checkOut }) {
   const { inDate, outDate, nights } = bookingDates({ roomId, checkIn, checkOut });
   const room = await Room.findOne({ _id: roomId, isActive: true }).lean();
   if (!room) throw new HttpError(404, 'Room not found');
@@ -84,12 +85,33 @@ export async function reserveBooking({ userId, roomId, checkIn, checkOut }) {
   return booking;
 }
 
-export async function createBookingOrder({ userId, roomId, checkIn, checkOut }) {
+export async function reserveBooking(args) {
+  return createPendingBooking(args);
+}
+
+export async function createBookingOrder({ userId, bookingId }) {
+  if (!isUuid(bookingId)) throw new HttpError(400, 'Invalid booking ID');
   const { keyId } = getRazorpayConfig();
   const razorpay = razorpayClient();
-  const reservation = await reserveBooking({ userId, roomId, checkIn, checkOut });
+  return withTransaction(async (client) => {
+    const found = await client.query(
+      'SELECT * FROM bookings WHERE id = $1 AND user_id = $2 FOR UPDATE',
+      [bookingId, userId],
+    );
+    const reservation = found.rows[0];
+    if (!reservation) throw new HttpError(404, 'Booking not found');
+    if (reservation.status !== 'pending') throw new HttpError(409, 'This booking is no longer awaiting payment.');
+    if (!reservation.payment_expires_at || new Date(reservation.payment_expires_at).getTime() <= Date.now()) {
+      throw new HttpError(409, 'This reservation has expired. Choose dates and create a new booking.');
+    }
+    if (reservation.payment_order_id) {
+      return {
+        booking: mapBooking(reservation),
+        order: { id: reservation.payment_order_id, amount: reservation.total_cents, currency: PAYMENT_CURRENCY },
+        keyId,
+      };
+    }
 
-  try {
     const order = await createRazorpayOrder(razorpay, {
       amount: reservation.total_cents,
       currency: PAYMENT_CURRENCY,
@@ -103,26 +125,18 @@ export async function createBookingOrder({ userId, roomId, checkIn, checkOut }) 
     ) {
       throw new HttpError(502, 'Razorpay returned an invalid payment order.');
     }
-    const { rows } = await pool.query(
+    const { rows } = await client.query(
       `UPDATE bookings SET payment_order_id = $1, updated_at = now()
-       WHERE id = $2 AND status = 'pending' RETURNING *`,
-      [order.id, reservation.id],
+       WHERE id = $2 AND status = 'pending' AND payment_expires_at > now() RETURNING *`,
+      [order.id, bookingId],
     );
-    if (!rows[0]) throw new HttpError(409, 'The booking reservation has expired. Please try again.');
+    if (!rows[0]) throw new HttpError(409, 'This reservation has expired. Choose dates and create a new booking.');
     return {
       booking: mapBooking(rows[0]),
       order: { id: order.id, amount: order.amount, currency: order.currency },
       keyId,
     };
-  } catch (error) {
-    await pool.query(
-      `UPDATE bookings SET status = 'cancelled', cancelled_at = now(), updated_at = now()
-       WHERE id = $1 AND status = 'pending'`,
-      [reservation.id],
-    );
-    await invalidate(bookedKey(reservation.room_id));
-    throw error;
-  }
+  });
 }
 
 async function submitRefund(booking) {
@@ -167,9 +181,50 @@ export async function verifyBookingPayment({ userId, bookingId, orderId, payment
   if (!verifyRazorpaySignature({ orderId: booking.payment_order_id, paymentId, signature, keySecret })) {
     throw new HttpError(400, 'Payment signature verification failed');
   }
+  return confirmBookingPayment({ userId, bookingId, orderId, paymentId, booking, razorpay });
+}
+
+export async function refreshBookingPayment({ userId, bookingId }) {
+  if (!isUuid(bookingId)) throw new HttpError(400, 'Invalid booking ID');
+  const found = await pool.query(
+    'SELECT * FROM bookings WHERE id = $1 AND user_id = $2',
+    [bookingId, userId],
+  );
+  const booking = found.rows[0];
+  if (!booking) throw new HttpError(404, 'Booking not found');
+  const cancelledBeforePayment = booking.status === 'cancelled' && !booking.payment_id;
+  if (booking.status !== 'pending' && !cancelledBeforePayment) return mapBooking(booking);
+  if (!booking.payment_order_id) throw new HttpError(409, 'This booking has no payment order to check.');
+
+  const razorpay = razorpayClient();
+  const response = await fetchRazorpayOrderPayments(razorpay, booking.payment_order_id);
+  const payments = Array.isArray(response?.items) ? response.items : [];
+  const candidates = payments
+    .filter((payment) => payment?.id && payment.order_id === booking.payment_order_id
+      && ['captured', 'authorized'].includes(payment.status))
+    .sort((a, b) => Number(b.status === 'captured') - Number(a.status === 'captured'));
+
+  for (const payment of candidates) {
+    const updated = await confirmBookingPayment({
+      userId,
+      bookingId,
+      orderId: booking.payment_order_id,
+      paymentId: payment.id,
+      booking,
+      razorpay,
+    });
+    if (updated.status !== 'pending') return updated;
+  }
+  return mapBooking(booking);
+}
+
+async function confirmBookingPayment({ userId, bookingId, orderId, paymentId, booking, razorpay }) {
   if (booking.status === 'confirmed' && booking.payment_id === paymentId) return mapBooking(booking);
   if (booking.status === 'refund_pending' && booking.payment_id === paymentId) return submitRefund(booking);
-  if (booking.status !== 'pending') throw new HttpError(409, 'This booking is no longer awaiting payment');
+  const cancelledBeforePayment = booking.status === 'cancelled' && !booking.payment_id;
+  if (booking.status !== 'pending' && !cancelledBeforePayment) {
+    throw new HttpError(409, 'This booking is no longer awaiting payment');
+  }
 
   let payment = await fetchRazorpayPayment(razorpay, paymentId);
   if (!paymentMatchesBooking(payment, booking.payment_order_id, booking.total_cents)) {
@@ -186,6 +241,15 @@ export async function verifyBookingPayment({ userId, bookingId, orderId, payment
     throw new HttpError(409, 'Razorpay has not captured the full booking payment yet.');
   }
 
+  if (cancelledBeforePayment) {
+    const refundRecord = await markCapturedPaymentForRefund(booking, paymentId, Number(payment.amount));
+    const refundedBooking = await submitRefund(refundRecord);
+    if (refundedBooking.refundStatus === 'failed') {
+      throw new HttpError(409, 'Payment arrived after the reservation was cancelled, but Razorpay reported that the refund failed. Contact support.');
+    }
+    throw new HttpError(409, 'Payment arrived after the reservation was cancelled. A refund has been requested; check My bookings for its status.');
+  }
+
   const result = await withTransaction(async (client) => {
     const currentResult = await client.query(
       'SELECT * FROM bookings WHERE id = $1 AND user_id = $2 FOR UPDATE',
@@ -195,6 +259,16 @@ export async function verifyBookingPayment({ userId, bookingId, orderId, payment
     if (!current) throw new HttpError(404, 'Booking not found');
     if (current.status === 'confirmed' && current.payment_id === paymentId) {
       return { booking: current, conflict: false };
+    }
+    if (current.status === 'cancelled' && current.payment_order_id === orderId && !current.payment_id) {
+      const { rows } = await client.query(
+        `UPDATE bookings SET status = 'refund_pending', payment_id = $1, refund_cents = total_cents,
+           refund_status = 'initiating', refund_idempotency_key = COALESCE(refund_idempotency_key, $2),
+           updated_at = now()
+         WHERE id = $3 RETURNING *`,
+        [paymentId, newId(), bookingId],
+      );
+      return { booking: rows[0], conflict: true, cancelled: true };
     }
     if (current.status !== 'pending' || current.payment_order_id !== orderId) {
       throw new HttpError(409, 'This booking is no longer awaiting payment');
@@ -217,7 +291,7 @@ export async function verifyBookingPayment({ userId, bookingId, orderId, payment
          WHERE id = $3 RETURNING *`,
         [paymentId, newId(), bookingId],
       );
-      return { booking: rows[0], conflict: true };
+      return { booking: rows[0], conflict: true, cancelled: false };
     }
 
     const { rows } = await client.query(
@@ -230,19 +304,20 @@ export async function verifyBookingPayment({ userId, bookingId, orderId, payment
 
   await invalidate(bookedKey(booking.room_id));
   if (result.conflict) {
+    const reason = result.cancelled ? 'the reservation was cancelled' : 'these dates became unavailable';
     let refundedBooking;
     try {
       refundedBooking = await submitRefund(result.booking);
     } catch (error) {
       if (error instanceof HttpError) {
-        throw new HttpError(error.status, `Payment was captured after these dates became unavailable. ${error.message}`);
+        throw new HttpError(error.status, `Payment was captured after ${reason}. ${error.message}`);
       }
       throw error;
     }
     if (refundedBooking.refundStatus === 'failed') {
-      throw new HttpError(409, 'Payment was captured after these dates became unavailable, and Razorpay reported that the refund failed. Contact support.');
+      throw new HttpError(409, `Payment was captured after ${reason}, and Razorpay reported that the refund failed. Contact support.`);
     }
-    throw new HttpError(409, 'Payment was captured after these dates became unavailable. A refund has been requested; check My bookings for its status.');
+    throw new HttpError(409, `Payment was captured after ${reason}. A refund has been requested; check My bookings for its status.`);
   }
   return mapBooking(result.booking);
 }
@@ -255,7 +330,7 @@ async function markCapturedPaymentForRefund(booking, paymentId, amount) {
     `UPDATE bookings SET status = 'refund_pending', payment_id = $1, refund_cents = $2,
        refund_status = 'initiating', refund_idempotency_key = COALESCE(refund_idempotency_key, $3),
        updated_at = now()
-     WHERE id = $4 AND status = 'pending' RETURNING *`,
+     WHERE id = $4 AND status IN ('pending', 'cancelled') AND payment_id IS NULL RETURNING *`,
     [paymentId, amount, newId(), booking.id],
   );
   if (!rows[0]) throw new HttpError(409, 'Payment was captured but could not be matched to an active booking. Contact support.');
@@ -264,19 +339,47 @@ async function markCapturedPaymentForRefund(booking, paymentId, amount) {
 }
 
 export async function cancelBooking({ userId, bookingId }) {
+  return cancelBookingRecord({ userId, bookingId, admin: false });
+}
+
+export async function adminCancelBooking({ bookingId }) {
+  return cancelBookingRecord({ bookingId, admin: true });
+}
+
+async function cancelBookingRecord({ userId, bookingId, admin }) {
   if (!isUuid(bookingId)) throw new HttpError(400, 'Invalid booking ID');
+  const initialResult = userId
+    ? await pool.query('SELECT * FROM bookings WHERE id = $1 AND user_id = $2', [bookingId, userId])
+    : await pool.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
+  const initial = initialResult.rows[0];
+  if (!initial) throw new HttpError(404, 'Booking not found');
+  if (initial.status === 'pending' && initial.payment_order_id) {
+    await refreshBookingPayment({ userId: initial.user_id, bookingId });
+  }
+
   const result = await withTransaction(async (client) => {
-    const found = await client.query(
-      'SELECT *, check_in::text AS check_in_date FROM bookings WHERE id = $1 AND user_id = $2 FOR UPDATE',
-      [bookingId, userId],
-    );
+    const found = userId
+      ? await client.query(
+        'SELECT *, check_in::text AS check_in_date FROM bookings WHERE id = $1 AND user_id = $2 FOR UPDATE',
+        [bookingId, userId],
+      )
+      : await client.query(
+        'SELECT *, check_in::text AS check_in_date FROM bookings WHERE id = $1 FOR UPDATE',
+        [bookingId],
+      );
     const existing = found.rows[0];
     if (!existing) throw new HttpError(404, 'Booking not found');
     if (existing.status === 'cancelled') return { booking: existing, retryRefund: false };
     if (existing.status === 'pending') {
-      throw new HttpError(409, 'This payment session is still pending. Its room hold expires after 15 minutes.');
+      const { rows } = await client.query(
+        `UPDATE bookings SET status = 'cancelled', cancelled_at = now(), updated_at = now()
+         WHERE id = $1 RETURNING *`,
+        [bookingId],
+      );
+      return { booking: rows[0], retryRefund: false };
     }
     if (existing.status === 'confirmed') {
+      if (!admin) throw new HttpError(403, 'Only an admin can cancel a paid booking.');
       if (!existing.payment_id) {
         throw new HttpError(409, 'This booking predates Razorpay payments. Contact support to cancel it.');
       }

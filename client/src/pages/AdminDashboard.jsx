@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { fmtDate, money, errMsg } from '../utils.js';
+import { daysUntil, fmtDate, money, errMsg } from '../utils.js';
 import AdminSupport from './AdminSupport.jsx';
 
 export default function AdminDashboard() {
@@ -23,6 +23,7 @@ export default function AdminDashboard() {
 
   // Bookings state
   const [bookings, setBookings] = useState([]);
+  const [cancellingBookingId, setCancellingBookingId] = useState(null);
 
   const notify = (text, type = 'pos') => {
     setMsg({ text, type });
@@ -67,6 +68,28 @@ export default function AdminDashboard() {
       notify(errMsg(e), 'error');
     }
   }, []);
+
+  async function cancelAdminBooking(booking) {
+    const message = booking.status === 'confirmed'
+      ? `Cancel ${booking.room?.name}? A full Razorpay refund will be requested.`
+      : `Cancel the unpaid reservation for ${booking.room?.name}?`;
+    if (!window.confirm(message)) return;
+    setCancellingBookingId(booking._id);
+    try {
+      const { data } = await api.post(`/admin/bookings/${booking._id}/cancel`);
+      notify(data.booking.refundStatus === 'none'
+        ? 'Unpaid reservation cancelled.'
+        : data.booking.refundStatus === 'failed'
+          ? 'Booking cancelled, but the Razorpay refund failed. Contact support.'
+          : `Booking cancelled. Razorpay refund status: ${data.booking.refundStatus}.`);
+      await loadBookings();
+    } catch (e) {
+      notify(errMsg(e), 'error');
+      await loadBookings();
+    } finally {
+      setCancellingBookingId(null);
+    }
+  }
 
   useEffect(() => {
     loadHotels();
@@ -518,6 +541,7 @@ export default function AdminDashboard() {
         <section>
           <h2>All System Bookings</h2>
           <p className="muted small">Complete ledger of all customer reservations across all hotels.</p>
+          <p className="muted small">Admins can cancel unpaid reservations or eligible paid bookings. Paid cancellations require more than 7 days before check-in and request a full Razorpay refund.</p>
 
           <div className="table-wrap">
             <table className="admin-table">
@@ -530,12 +554,13 @@ export default function AdminDashboard() {
                   <th>Nights</th>
                   <th>Amount</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {bookings.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                    <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
                       No bookings recorded yet.
                     </td>
                   </tr>
@@ -570,6 +595,19 @@ export default function AdminDashboard() {
                         <span className={`badge ${b.status === 'confirmed' || b.status === 'pending' ? 'badge-active' : 'badge-inactive'}`}>
                           {b.status}
                         </span>
+                      </td>
+                      <td>
+                        {(b.status === 'pending' || (b.status === 'confirmed' && daysUntil(b.checkIn) > 7))
+                          ? <button
+                            className="btn ghost"
+                            disabled={cancellingBookingId === b._id}
+                            onClick={() => cancelAdminBooking(b)}
+                          >
+                            {cancellingBookingId === b._id ? 'Cancelling…' : 'Cancel'}
+                          </button>
+                          : b.status === 'confirmed'
+                            ? <small className="muted">Within 7-day cutoff</small>
+                            : <span />}
                       </td>
                     </tr>
                   ))

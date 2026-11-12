@@ -27,9 +27,9 @@ The project has a React single-page client and a Node.js/Express API. Hotel and 
 - Search, filter, and sort hotels and rooms.
 - View room details, capacity, nightly price, and booked dates.
 - Register and sign in with email and password.
-- Pay for available dates with Razorpay; overlapping reservations are rejected.
-- View reservations and cancel eligible future bookings for a full Razorpay refund.
-- Admin tools for managing hotels, rooms, users, bookings, and support conversations.
+- Create pending reservations for available dates, then pay with Razorpay from My bookings; overlapping reservations are rejected.
+- View reservations and cancel unpaid reservations.
+- Admin tools for managing hotels, rooms, users, bookings, and support conversations; admins can cancel unpaid reservations and eligible paid bookings.
 - Live customer support chat using Socket.IO.
 
 ## Technology Stack
@@ -50,15 +50,15 @@ The project has a React single-page client and a Node.js/Express API. Hotel and 
 1. The Vite-served React client displays the hotel catalog and customer/admin screens.
 2. The client calls the Express API under `/api`; in development, Vite proxies these requests to `http://localhost:4000`. Socket.IO connections are proxied as well.
 3. The API reads hotel and room records from MongoDB and stores users, booking/payment records, and chat data in PostgreSQL.
-4. The API reserves dates in PostgreSQL, creates Razorpay orders server-side, and confirms bookings only after server-side signature and captured-payment checks. Redis, if configured, is only a cache; the application can run without it.
+4. The API creates a pending reservation in PostgreSQL when the customer books dates. A Razorpay order is created server-side only when the customer chooses to pay from My bookings; the API confirms the booking only after signature and captured-payment checks. Redis, if configured, is only a cache; the application can run without it.
 
 ## Roles and Access
 
 | Role | Access |
 |---|---|
 | Visitor | Browse hotels and rooms; register or sign in. |
-| Customer | Book rooms using Razorpay, view and cancel eligible bookings, and contact support. |
-| Admin | Manage the catalog and user accounts, review bookings, and respond to support chats. |
+| Customer | Create pending bookings, pay from My bookings using Razorpay, cancel unpaid reservations, and contact support. |
+| Admin | Manage the catalog and user accounts, cancel unpaid reservations or eligible paid bookings, review reservations, and respond to support chats. |
 
 Admin accounts are configured through the server seed settings, not public customer registration. API endpoints enforce role-based access.
 
@@ -211,8 +211,11 @@ npm run race-test
 ## Payments and Important Notes
 
 - Booking totals are calculated by the server from the selected room and dates, then sent to Razorpay in INR paise.
-- A booking holds dates for up to 15 minutes while checkout is in progress. The server verifies Razorpay's payment signature and captured payment amount/currency before confirming a booking.
-- Eligible cancellations made more than 7 days before check-in request a full Razorpay refund. Refunds can remain pending while the payment provider processes them; the booking page displays the refund status.
+- Booking a date range creates a pending reservation without taking payment. Its dates are held for up to 15 minutes; the customer must pay from My bookings before the hold expires.
+- The server creates the Razorpay order when the customer selects Pay from My bookings. It verifies Razorpay's payment signature and captured payment amount/currency before confirming the booking.
+- If checkout verification is interrupted, customers can use **Check payment** in My bookings. The server checks the order directly with Razorpay before changing the booking status.
+- Customers can cancel unpaid reservations. The server checks Razorpay before accepting cancellation; if payment was already captured, it will not be treated as unpaid. A payment captured after cancellation triggers a refund request.
+- Only admins can cancel paid bookings. Admin cancellation is available more than 7 days before check-in and requests a full Razorpay refund. Refunds can remain pending while the payment provider processes them; the booking pages display the refund status.
 - Existing bookings without a Razorpay payment ID cannot be automatically refunded through the new flow; contact support before attempting to cancel them.
 - Existing wallet data is retained in the database for compatibility, but wallet balances, top-ups, and wallet-based booking payments are no longer available in the application.
 - The frontend includes no active Google sign-in flow; accounts use email and password.

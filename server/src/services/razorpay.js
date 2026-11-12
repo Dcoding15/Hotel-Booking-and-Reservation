@@ -35,6 +35,10 @@ export function fetchRazorpayPayment(client, paymentId) {
   return providerCall(() => client.payments.fetch(paymentId), 'Razorpay could not verify the payment.');
 }
 
+export function fetchRazorpayOrderPayments(client, orderId) {
+  return providerCall(() => client.orders.fetchPayments(orderId), 'Razorpay could not check the payment status.');
+}
+
 export function captureRazorpayPayment(client, paymentId, amount) {
   return providerCall(
     () => client.payments.capture(paymentId, amount, PAYMENT_CURRENCY),

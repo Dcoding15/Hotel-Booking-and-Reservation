@@ -6,6 +6,7 @@ import { Hotel, Room } from '../models/index.js';
 import { auth } from '../middleware.js';
 import { invalidate } from '../redis.js';
 import { HttpError, pick } from '../utils.js';
+import { adminCancelBooking } from '../services/bookingService.js';
 
 const router = Router();
 router.use(auth('admin'));
@@ -175,6 +176,10 @@ router.delete('/users/:id', async (req, res) => {
   const { rows } = await pool.query('DELETE FROM users WHERE id = $1 RETURNING name, email', [req.params.id]);
   if (!rows.length) throw new HttpError(404, 'User not found');
   res.json({ ok: true, message: `User "${rows[0].name || rows[0].email}" was deleted` });
+});
+
+router.post('/bookings/:id/cancel', async (req, res) => {
+  res.json(await adminCancelBooking({ bookingId: req.params.id }));
 });
 
 router.get('/bookings', async (_req, res) => {

@@ -43,7 +43,7 @@ export default function Home() {
   return (
     <>
       <h1>Find your next stay</h1>
-      <p className="muted lead">Explore hotels by destination, amenities, and nightly price. Pay securely with Razorpay when you book.</p>
+      <p className="muted lead">Explore hotels by destination, amenities, and nightly price. Book your dates now, then pay securely with Razorpay from My bookings.</p>
       {error && <p className="error">{error}</p>}
       {!hotels && !error && <p className="muted">Loading hotels…</p>}
       {hotels && (
