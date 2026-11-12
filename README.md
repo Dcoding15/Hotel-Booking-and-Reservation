@@ -127,7 +127,7 @@ Replace placeholders with your own values; do not commit `.env` files or share s
 
 ### 2. Install dependencies
 
-From the repository root, install each package separately:
+There is no `package.json` in the repository root, so `npm install` must be run from each app directory. From the repository root, run:
 
 ```bash
 cd server
