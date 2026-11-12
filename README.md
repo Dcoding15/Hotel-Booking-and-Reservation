@@ -210,10 +210,14 @@ npm run race-test
 
 ## Payments and Important Notes
 
-- Booking totals are calculated by the server from the selected room and dates, then sent to Razorpay in INR paise.
-- Booking a date range creates a pending reservation without taking payment. Its dates are held for up to 15 minutes; the customer must pay from My bookings before the hold expires.
-- The server creates the Razorpay order when the customer selects Pay from My bookings. It verifies Razorpay's payment signature and captured payment amount/currency before confirming the booking.
-- If checkout verification is interrupted, customers can use **Check payment** in My bookings. The server checks the order directly with Razorpay before changing the booking status.
+### Booking and payment flow
+
+1. Select dates and choose **Book these dates**. The server creates a pending reservation; this step does not take payment.
+2. Open **My bookings** and choose **Pay with Razorpay**. The server creates the Razorpay order and calculates the amount in INR paise.
+3. Pay within the 15-minute reservation hold. The booking becomes confirmed only after the server verifies the signature and confirms the captured payment amount and currency with Razorpay.
+4. If checkout verification is interrupted, choose **Check payment** in My bookings to reconcile the order directly with Razorpay.
+
+- Booking totals are always calculated by the server from the selected room and dates.
 - Customers can cancel unpaid reservations. The server checks Razorpay before accepting cancellation; if payment was already captured, it will not be treated as unpaid. A payment captured after cancellation triggers a refund request.
 - Only admins can cancel paid bookings. Admin cancellation is available more than 7 days before check-in and requests a full Razorpay refund. Refunds can remain pending while the payment provider processes them; the booking pages display the refund status.
 - Existing bookings without a Razorpay payment ID cannot be automatically refunded through the new flow; contact support before attempting to cancel them.
