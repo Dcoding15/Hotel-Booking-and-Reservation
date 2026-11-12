@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { mapUser, newId, pool, withTransaction } from '../db.js';
+import { mapUser, newId, pool } from '../db.js';
 import { auth, signToken } from '../middleware.js';
 import { HttpError } from '../utils.js';
 
@@ -11,7 +11,6 @@ export const publicUser = (u) => ({
   email: u.email,
   name: u.name,
   picture: u.picture,
-  walletBalance: u.walletBalance,
 });
 
 router.post('/register', async (req, res) => {
@@ -29,23 +28,15 @@ router.post('/register', async (req, res) => {
   if (!cleanName) throw new HttpError(400, 'Please provide your name');
 
   const id = newId();
-  const initialBalanceCents = 100_000;
   const passwordHash = await bcrypt.hash(cleanPassword, 10);
   let user;
   try {
-    user = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        `INSERT INTO users (id, role, email, name, picture, password_hash, wallet_balance)
-         VALUES ($1, 'customer', $2, $3, $4, $5, $6) RETURNING *`,
-        [id, cleanEmail, cleanName, `https://picsum.photos/seed/${encodeURIComponent(cleanEmail)}/100/100`, passwordHash, initialBalanceCents],
-      );
-      await client.query(
-        `INSERT INTO wallet_transactions (id, user_id, type, amount_cents, balance_after)
-         VALUES ($1, $2, 'topup', $3, $3)`,
-        [newId(), id, initialBalanceCents],
-      );
-      return mapUser(rows[0]);
-    });
+    const { rows } = await pool.query(
+      `INSERT INTO users (id, role, email, name, picture, password_hash)
+       VALUES ($1, 'customer', $2, $3, $4, $5) RETURNING *`,
+      [id, cleanEmail, cleanName, `https://picsum.photos/seed/${encodeURIComponent(cleanEmail)}/100/100`, passwordHash],
+    );
+    user = mapUser(rows[0]);
   } catch (error) {
     if (error.code === '23505') {
       throw new HttpError(409, 'An account with this email already exists. Please sign in.');

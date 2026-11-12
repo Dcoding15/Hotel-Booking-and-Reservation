@@ -20,11 +20,9 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([]);
   const [userRoleFilter, setUserRoleFilter] = useState('all'); // 'all' | 'customer' | 'admin'
   const [userModal, setUserModal] = useState(null); // null | { mode: 'add' | 'edit', data: {} }
-  const [walletModal, setWalletModal] = useState(null);
 
   // Bookings state
   const [bookings, setBookings] = useState([]);
-  const [walletRequests, setWalletRequests] = useState([]);
 
   const notify = (text, type = 'pos') => {
     setMsg({ text, type });
@@ -70,21 +68,11 @@ export default function AdminDashboard() {
     }
   }, []);
 
-  const loadWalletRequests = useCallback(async () => {
-    try {
-      const { data } = await api.get('/admin/wallet-requests');
-      setWalletRequests(data);
-    } catch (e) {
-      notify(errMsg(e), 'error');
-    }
-  }, []);
-
   useEffect(() => {
     loadHotels();
     loadUsers();
     loadBookings();
-    loadWalletRequests();
-  }, [loadHotels, loadUsers, loadBookings, loadWalletRequests]);
+  }, [loadHotels, loadUsers, loadBookings]);
 
   // ====================================================
   // HOTEL CRUD ACTIONS
@@ -133,14 +121,14 @@ export default function AdminDashboard() {
   async function saveRoom(e) {
     e.preventDefault();
     const { hotelId, mode, data } = roomModal;
-    const { _id, name, type, description, capacity, priceDollars, image, isActive } = data;
+    const { _id, name, type, description, capacity, priceRupees, image, isActive } = data;
     try {
       const payload = {
         name,
         type: type || 'Standard',
         description: description || '',
         capacity: Number(capacity) || 2,
-        pricePerNightCents: Math.round(Number(priceDollars) * 100),
+        pricePerNightCents: Math.round(Number(priceRupees) * 100),
         image: image || `https://picsum.photos/seed/${encodeURIComponent(name)}/900/600`,
         isActive: Boolean(isActive),
       };
@@ -178,14 +166,9 @@ export default function AdminDashboard() {
   async function saveUser(e) {
     e.preventDefault();
     const { mode, data } = userModal;
-    const { _id, name, email, password, role, walletDollars } = data;
+    const { _id, name, email, password, role } = data;
     try {
-      const payload = {
-        name,
-        email,
-        role,
-        walletBalance: Math.round((Number(walletDollars) || 0) * 100),
-      };
+      const payload = { name, email, role };
       if (password) payload.password = password;
 
       if (mode === 'add') {
@@ -215,31 +198,6 @@ export default function AdminDashboard() {
     try {
       await api.delete(`/admin/users/${u._id}`);
       notify(`User "${u.name || u.email}" was deleted.`);
-      loadUsers();
-    } catch (err) {
-      notify(errMsg(err), 'error');
-    }
-  }
-
-  async function reviewWalletRequest(request, action) {
-    try {
-      await api.post(`/admin/wallet-requests/${request._id}/${action}`);
-      notify(`Top-up request ${action === 'approve' ? 'approved' : 'rejected'}.`);
-      loadWalletRequests();
-      loadUsers();
-    } catch (err) {
-      notify(errMsg(err), 'error');
-    }
-  }
-
-  async function adjustWallet(e) {
-    e.preventDefault();
-    const { user, direction, dollars } = walletModal;
-    const amountCents = Math.round(Number(dollars) * 100) * (direction === 'subtract' ? -1 : 1);
-    try {
-      const { data } = await api.post(`/admin/users/${user._id}/wallet-adjustments`, { amountCents });
-      notify(`Wallet updated. New balance: ${money(data.walletBalance)}.`);
-      setWalletModal(null);
       loadUsers();
     } catch (err) {
       notify(errMsg(err), 'error');
@@ -277,9 +235,6 @@ export default function AdminDashboard() {
         </button>
         <button className={`tab-btn ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>
           Users & Staff ({users.length})
-        </button>
-        <button className={`tab-btn ${tab === 'walletRequests' ? 'active' : ''}`} onClick={() => setTab('walletRequests')}>
-          Wallet Requests ({walletRequests.filter((request) => request.status === 'pending').length})
         </button>
         <button className={`tab-btn ${tab === 'bookings' ? 'active' : ''}`} onClick={() => setTab('bookings')}>
           All Bookings ({bookings.length})
@@ -376,7 +331,7 @@ export default function AdminDashboard() {
                           setRoomModal({
                             mode: 'add',
                             hotelId: h._id,
-                            data: { name: '', type: 'Double', description: '', capacity: 2, priceDollars: 100, image: '', isActive: true },
+                            data: { name: '', type: 'Double', description: '', capacity: 2, priceRupees: 100, image: '', isActive: true },
                           })
                         }
                       >
@@ -423,7 +378,7 @@ export default function AdminDashboard() {
                                         setRoomModal({
                                           mode: 'edit',
                                           hotelId: h._id,
-                                          data: { ...r, priceDollars: (r.pricePerNightCents / 100).toFixed(0) },
+                                          data: { ...r, priceRupees: (r.pricePerNightCents / 100).toFixed(2) },
                                         })
                                       }
                                     >
@@ -457,7 +412,7 @@ export default function AdminDashboard() {
             <div>
               <h2>Users & Staff Accounts</h2>
               <p className="muted small" style={{ margin: 0 }}>
-                Manage customer accounts, wallets, and staff administrators with full edit and delete access.
+                Manage customer accounts and staff administrators with full edit and delete access.
               </p>
             </div>
             <button
@@ -465,7 +420,7 @@ export default function AdminDashboard() {
               onClick={() =>
                 setUserModal({
                   mode: 'add',
-                  data: { name: '', email: '', password: '', role: 'customer', walletDollars: 500 },
+                  data: { name: '', email: '', password: '', role: 'customer' },
                 })
               }
             >
@@ -502,7 +457,6 @@ export default function AdminDashboard() {
                   <th>Name</th>
                   <th>Email</th>
                   <th>Role</th>
-                  <th>Wallet Balance</th>
                   <th>Joined Date</th>
                   <th>Actions</th>
                 </tr>
@@ -521,9 +475,6 @@ export default function AdminDashboard() {
                           {u.role}
                         </span>
                       </td>
-                      <td>
-                        <strong className="pos">{money(u.walletBalance)}</strong>
-                      </td>
                       <td className="small muted">{new Date(u.createdAt).toLocaleDateString()}</td>
                       <td>
                         <div className="row" style={{ gap: '0.4rem' }}>
@@ -535,7 +486,6 @@ export default function AdminDashboard() {
                                 data: {
                                   ...u,
                                   password: '',
-                                  walletDollars: (u.walletBalance / 100).toFixed(0),
                                 },
                               })
                             }
@@ -561,40 +511,6 @@ export default function AdminDashboard() {
         </section>
       )}
 
-      {tab === 'walletRequests' && (
-        <section>
-          <h2>Customer wallet top-up requests</h2>
-          <p className="muted small">Approve a request to credit the customer’s wallet, or reject it without changing their balance.</p>
-          <div className="table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr><th>Customer</th><th>Amount</th><th>Requested</th><th>Status</th><th>Actions</th></tr>
-              </thead>
-              <tbody>
-                {walletRequests.length === 0 ? (
-                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>No wallet requests yet.</td></tr>
-                ) : walletRequests.map((request) => (
-                  <tr key={request._id}>
-                    <td><strong>{request.customer.name || 'Customer'}</strong><br /><small className="muted">{request.customer.email}</small></td>
-                    <td><strong>{money(request.amountCents)}</strong></td>
-                    <td className="small muted">{new Date(request.createdAt).toLocaleString()}</td>
-                    <td><span className={`badge ${request.status === 'approved' ? 'badge-active' : request.status === 'pending' ? 'badge-admin' : 'badge-inactive'}`}>{request.status}</span></td>
-                    <td>
-                      {request.status === 'pending' ? (
-                        <div className="row" style={{ gap: '0.4rem' }}>
-                          <button className="btn btn-sm" onClick={() => reviewWalletRequest(request, 'approve')}>Approve</button>
-                          <button className="btn btn-sm btn-danger" onClick={() => reviewWalletRequest(request, 'reject')}>Reject</button>
-                        </div>
-                      ) : <span className="muted small">Reviewed {request.reviewedAt ? new Date(request.reviewedAt).toLocaleString() : ''}</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
       {/* ==================================================== */}
       {/* TAB 3: BOOKINGS AUDIT                                */}
       {/* ==================================================== */}
@@ -612,7 +528,7 @@ export default function AdminDashboard() {
                   <th>Room</th>
                   <th>Dates (In → Out)</th>
                   <th>Nights</th>
-                  <th>Total Paid</th>
+                  <th>Amount</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -643,11 +559,15 @@ export default function AdminDashboard() {
                       <td>{b.nights}</td>
                       <td>
                         <strong>{money(b.totalCents)}</strong>
-                        {b.status === 'cancelled' && <br />}
-                        {b.status === 'cancelled' && <small className="neg">Refund: {money(b.refundCents)}</small>}
+                        {(b.status === 'cancelled' || b.status === 'refund_pending') && <br />}
+                        {(b.status === 'cancelled' || b.status === 'refund_pending') && (
+                          <small className={b.refundStatus === 'failed' ? 'neg' : 'muted'}>
+                            Refund {b.refundStatus}: {money(b.refundCents)}
+                          </small>
+                        )}
                       </td>
                       <td>
-                        <span className={`badge ${b.status === 'confirmed' ? 'badge-active' : 'badge-inactive'}`}>
+                        <span className={`badge ${b.status === 'confirmed' || b.status === 'pending' ? 'badge-active' : 'badge-inactive'}`}>
                           {b.status}
                         </span>
                       </td>
@@ -817,16 +737,16 @@ export default function AdminDashboard() {
               </div>
 
               <label>
-                Price per Night ($ USD)
+                Price per Night (₹ INR)
                 <input
                   type="number"
                   min="1"
-                  step="1"
+                  step="0.01"
                   required
-                  placeholder="e.g. 150"
-                  value={roomModal.data.priceDollars || ''}
+                  placeholder="e.g. 150.00"
+                  value={roomModal.data.priceRupees || ''}
                   onChange={(e) =>
-                    setRoomModal({ ...roomModal, data: { ...roomModal.data, priceDollars: e.target.value } })
+                    setRoomModal({ ...roomModal, data: { ...roomModal.data, priceRupees: e.target.value } })
                   }
                 />
               </label>
@@ -944,19 +864,6 @@ export default function AdminDashboard() {
                 </select>
               </label>
 
-              <label>
-                Wallet Balance ($ USD)
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={userModal.data.walletDollars || 0}
-                  onChange={(e) =>
-                    setUserModal({ ...userModal, data: { ...userModal.data, walletDollars: e.target.value } })
-                  }
-                />
-              </label>
-
               <div className="row" style={{ justifyContent: 'flex-end', marginTop: '1rem' }}>
                 <button type="button" className="btn ghost" onClick={() => setUserModal(null)}>
                   Cancel
@@ -964,43 +871,6 @@ export default function AdminDashboard() {
                 <button type="submit" className="btn">
                   {userModal.mode === 'add' ? 'Create User' : 'Save Changes'}
                 </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {walletModal && (
-        <div className="overlay" onClick={() => setWalletModal(null)}>
-          <div className="modal" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
-            <button className="close link" onClick={() => setWalletModal(null)} aria-label="Close">✕</button>
-            <h2>Adjust wallet</h2>
-            <p className="muted small">{walletModal.user.name || walletModal.user.email} · Current balance {money(walletModal.user.walletBalance)}</p>
-            <form onSubmit={adjustWallet} style={{ display: 'grid', gap: '0.85rem' }}>
-              <label>
-                Action
-                <select
-                  value={walletModal.direction}
-                  onChange={(e) => setWalletModal({ ...walletModal, direction: e.target.value })}
-                >
-                  <option value="add">Add funds</option>
-                  <option value="subtract">Subtract funds</option>
-                </select>
-              </label>
-              <label>
-                Amount ($)
-                <input
-                  type="number"
-                  min="0.01"
-                  max="10000"
-                  step="0.01"
-                  required
-                  value={walletModal.dollars}
-                  onChange={(e) => setWalletModal({ ...walletModal, dollars: e.target.value })}
-                />
-              </label>
-              <div className="row" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn ghost" onClick={() => setWalletModal(null)}>Cancel</button>
-                <button type="submit" className="btn">Apply adjustment</button>
               </div>
             </form>
           </div>

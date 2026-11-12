@@ -1,6 +1,6 @@
 # Roomkey — Hotel Booking and Reservation
 
-Roomkey is a hotel discovery and booking web application. Customers can browse hotels, book rooms using an in-app wallet, manage reservations, and contact support; administrators manage the catalog, users, wallet requests, and support conversations.
+Roomkey is a hotel discovery and booking web application. Customers can browse hotels, pay for room reservations with Razorpay, manage bookings, and contact support; administrators manage the catalog, user accounts, bookings, and support conversations.
 
 ## Table of Contents
 
@@ -20,17 +20,16 @@ Roomkey is a hotel discovery and booking web application. Customers can browse h
 
 ## Project Overview
 
-The project has a React single-page client and a Node.js/Express API. Hotel and room catalog data is stored in MongoDB; users, bookings, wallet activity, and support conversations are stored in PostgreSQL. Redis can optionally cache catalog and availability responses.
+The project has a React single-page client and a Node.js/Express API. Hotel and room catalog data is stored in MongoDB; users, bookings, and support conversations are stored in PostgreSQL. Redis can optionally cache catalog and availability responses.
 
 ## Features
 
 - Search, filter, and sort hotels and rooms.
 - View room details, capacity, nightly price, and booked dates.
 - Register and sign in with email and password.
-- Book available dates using wallet balance; overlapping bookings are rejected.
-- View reservations and cancel eligible future bookings for a full wallet refund.
-- Request wallet top-ups and track requests and transactions.
-- Admin tools for managing hotels, rooms, users, bookings, wallet balances, and top-up requests.
+- Pay for available dates with Razorpay; overlapping reservations are rejected.
+- View reservations and cancel eligible future bookings for a full Razorpay refund.
+- Admin tools for managing hotels, rooms, users, bookings, and support conversations.
 - Live customer support chat using Socket.IO.
 
 ## Technology Stack
@@ -40,7 +39,8 @@ The project has a React single-page client and a Node.js/Express API. Hotel and 
 | Client | React 18, React Router, Vite |
 | API | Node.js, Express 5 |
 | Catalog | MongoDB with Mongoose |
-| Accounts, bookings, wallet, and chat | PostgreSQL with `pg` |
+| Accounts, bookings, and chat | PostgreSQL with `pg` |
+| Payments and refunds | Razorpay Checkout and Node SDK |
 | Optional cache | Redis with `ioredis` |
 | Live support | Socket.IO |
 | Authentication | JWT bearer tokens; passwords hashed with bcrypt |
@@ -49,16 +49,16 @@ The project has a React single-page client and a Node.js/Express API. Hotel and 
 
 1. The Vite-served React client displays the hotel catalog and customer/admin screens.
 2. The client calls the Express API under `/api`; in development, Vite proxies these requests to `http://localhost:4000`. Socket.IO connections are proxied as well.
-3. The API reads hotel and room records from MongoDB and stores users, bookings, wallet records, and chat data in PostgreSQL.
-4. Booking validation and wallet debit are performed together in a PostgreSQL transaction. Redis, if configured, is only a cache; the application can run without it.
+3. The API reads hotel and room records from MongoDB and stores users, booking/payment records, and chat data in PostgreSQL.
+4. The API reserves dates in PostgreSQL, creates Razorpay orders server-side, and confirms bookings only after server-side signature and captured-payment checks. Redis, if configured, is only a cache; the application can run without it.
 
 ## Roles and Access
 
 | Role | Access |
 |---|---|
 | Visitor | Browse hotels and rooms; register or sign in. |
-| Customer | Book rooms, view and cancel eligible bookings, use the wallet, and contact support. |
-| Admin | Manage the catalog and user accounts, review bookings, adjust wallets, approve/reject top-up requests, and respond to support chats. |
+| Customer | Book rooms using Razorpay, view and cancel eligible bookings, and contact support. |
+| Admin | Manage the catalog and user accounts, review bookings, and respond to support chats. |
 
 Admin accounts are configured through the server seed settings, not public customer registration. API endpoints enforce role-based access.
 
@@ -67,10 +67,10 @@ Admin accounts are configured through the server seed settings, not public custo
 | Store | Data |
 |---|---|
 | MongoDB | Hotels and rooms, including descriptions, amenities, prices, and active status. |
-| PostgreSQL | Users and roles; bookings and cancellation/refund details; wallet balances, transactions, and top-up requests; chat threads and messages. |
+| PostgreSQL | Users and roles; bookings, payment order IDs and refund state; chat threads and messages. Legacy wallet columns/tables are retained for existing database compatibility but are not used by the active payment flow. |
 | Redis (optional) | Short-lived hotel, room, and booked-date response caches. |
 
-Wallet values and room prices are stored as integer cents (for example, `$12.34` is `1234` cents).
+Room prices and payment amounts are stored as integer paise (for example, `₹12.34` is `1234` paise). Existing catalog values are not automatically currency-converted; review and update them for INR before taking real payments.
 
 ## Project Structure
 
@@ -78,7 +78,7 @@ Wallet values and room prices are stored as integer cents (for example, `$12.34`
 client/
   src/
     components/       Shared UI such as the header, sign-in, booking, and chat
-    pages/            Hotel search, hotel details, bookings, wallet, and admin
+    pages/            Hotel search, hotel details, bookings, and admin
     App.jsx           Routes and role-protected pages
     api.js            HTTP and Socket.IO client setup
     auth.jsx          Client authentication state
@@ -88,7 +88,7 @@ server/
   src/
     models/           MongoDB hotel and room models
     routes/            Authentication, catalog, customer, admin, and chat APIs
-    services/          Booking and wallet business logic
+    services/          Booking and Razorpay payment/refund logic
     db.js              PostgreSQL schema initialization and helpers
     index.js           API startup and route registration
     socket.js          Authenticated real-time support chat
@@ -102,6 +102,7 @@ server/
 - Node.js 20 or newer and npm.
 - A MongoDB instance.
 - A PostgreSQL database and a database user allowed to create tables and indexes.
+- Razorpay account and API keys to accept bookings; test-mode keys are recommended for development.
 - Redis is optional.
 
 ## Setup
@@ -118,12 +119,14 @@ DATABASE_URL=postgresql://<username>:<password>@localhost:5432/roomkey
 JWT_SECRET=<long-random-secret>
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=<strong-admin-password>
+RAZORPAY_KEY_ID=rzp_test_your_key_id
+RAZORPAY_KEY_SECRET=<your-test-key-secret>
 REDIS_URL=redis://127.0.0.1:6379
 ```
 
-`MONGO_URI`, `DATABASE_URL`, and `JWT_SECRET` are required to run the API. `ADMIN_EMAIL` and `ADMIN_PASSWORD` are required by the seed command. `PORT` defaults to `4000`; set `CLIENT_URL` to the client origin allowed by CORS. `REDIS_URL` is optional and may be omitted if Redis is not available.
+`MONGO_URI`, `DATABASE_URL`, and `JWT_SECRET` are required to run the API. `ADMIN_EMAIL` and `ADMIN_PASSWORD` are required by the seed command. `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` are required to create payment orders and issue refunds, but not to start the API or browse the catalog. `PORT` defaults to `4000`; set `CLIENT_URL` to the client origin allowed by CORS. `REDIS_URL` is optional and may be omitted if Redis is not available.
 
-Replace placeholders with your own values; do not commit `.env` files or share secrets. The server initializes PostgreSQL tables when it starts.
+Generate API keys from Razorpay Dashboard → **Account & Settings → API Keys** while in **Test Mode**. Replace placeholders with your own values in `server/.env`; never put the key secret in the client or commit/share it. The key ID is sent to Checkout by the server, while the key secret remains server-side. The server applies payment-schema changes to PostgreSQL when it starts.
 
 ### 2. Install dependencies
 
@@ -173,6 +176,7 @@ Available package commands:
 | `npm run seed` | `server` | Configure the admin and seed starter catalog data if empty. |
 | `npm run seed:catalog` | `server` | Add the larger sample hotel catalog. |
 | `npm run race-test` | `server` | Run the concurrent booking check. |
+| `npm test` | `server` | Run focused Razorpay payment helper tests. |
 | `npm run dev` | `client` | Start the Vite development server. |
 | `npm run build` | `client` | Build the client into `client/dist`. |
 | `npm run preview` | `client` | Preview the production client build. |
@@ -189,19 +193,27 @@ This command requires `MONGO_URI`. Do not use real customer information or produ
 
 ## Tests
 
-The server package exposes one test command:
+Run the focused payment tests with:
 
 ```bash
 cd server
+npm test
+```
+
+The database-backed concurrency check can also be run with:
+
+```bash
 npm run race-test
 ```
 
-The concurrency check creates temporary test users and a room in the configured databases, then checks that only one simultaneous booking for the same dates succeeds. It may target a running API at `API_URL` (default `http://localhost:4000/api`) or exercise the booking service directly. Run it only against a disposable or development database. The package manifests do not define `npm test` or lint commands.
+`npm test` checks Razorpay signature and amount/currency validation. The concurrency check creates temporary test users and a room in the configured databases, then checks that only one of 20 simultaneous date reservations succeeds. It does not contact Razorpay. Run it only against a disposable or development database. No lint command is defined.
 
 ## Payments and Important Notes
 
-- The application does **not** integrate with a payment processor. There are no payment-gateway API keys or payment environment variables to configure.
-- Wallet top-ups are requests for internal/demo credits: an admin must approve a request before the wallet is credited. This does not charge a card or transfer real money.
-- New customer accounts receive a starting wallet balance of `$1,000` in app credit. Bookings debit the wallet; eligible cancellations refund it.
+- Booking totals are calculated by the server from the selected room and dates, then sent to Razorpay in INR paise.
+- A booking holds dates for up to 15 minutes while checkout is in progress. The server verifies Razorpay's payment signature and captured payment amount/currency before confirming a booking.
+- Eligible cancellations made more than 7 days before check-in request a full Razorpay refund. Refunds can remain pending while the payment provider processes them; the booking page displays the refund status.
+- Existing bookings without a Razorpay payment ID cannot be automatically refunded through the new flow; contact support before attempting to cancel them.
+- Existing wallet data is retained in the database for compatibility, but wallet balances, top-ups, and wallet-based booking payments are no longer available in the application.
 - The frontend includes no active Google sign-in flow; accounts use email and password.
 - Keep database credentials, admin passwords, and `JWT_SECRET` private. For public deployment, use strong unique secrets, restrict database access, configure the correct `CLIENT_URL`, and serve the client over HTTPS.

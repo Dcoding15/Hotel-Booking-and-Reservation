@@ -25,7 +25,6 @@ export function AuthProvider({ children }) {
 
   const signIn = (token, u) => { localStorage.setItem(TOKEN_KEY, token); setUser(u); };
   const signOut = () => { localStorage.removeItem(TOKEN_KEY); setUser(null); };
-  const setBalance = (walletBalance) => setUser((u) => (u ? { ...u, walletBalance } : u));
 
-  return <Ctx.Provider value={{ user, ready, signIn, signOut, refresh, setBalance }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, ready, signIn, signOut, refresh }}>{children}</Ctx.Provider>;
 }

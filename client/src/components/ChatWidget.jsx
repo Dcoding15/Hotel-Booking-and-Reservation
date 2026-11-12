@@ -42,7 +42,7 @@ export default function ChatWidget() {
         <div className="chat-panel">
           <div className="chat-head">Roomkey support <button className="link" onClick={() => setOpen(false)} aria-label="Close chat" style={{textDecoration: "none"}}>✕</button></div>
           <div className="msgs">
-            {messages.length === 0 && <p className="muted small">Ask about a booking, your wallet or a room. A team member will reply here.</p>}
+            {messages.length === 0 && <p className="muted small">Ask about a booking or a room. A team member will reply here.</p>}
             {messages.map((m) => <p key={m._id} className={`msg ${m.senderRole === 'customer' ? 'me' : ''}`}>{m.text}</p>)}
             <div ref={endRef} />
           </div>

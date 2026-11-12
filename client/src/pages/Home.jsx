@@ -43,7 +43,7 @@ export default function Home() {
   return (
     <>
       <h1>Find your next stay</h1>
-      <p className="muted lead">Explore hotels by destination, amenities, and nightly price. Bookings are paid from your Roomkey wallet.</p>
+      <p className="muted lead">Explore hotels by destination, amenities, and nightly price. Pay securely with Razorpay when you book.</p>
       {error && <p className="error">{error}</p>}
       {!hotels && !error && <p className="muted">Loading hotels…</p>}
       {hotels && (
@@ -73,7 +73,7 @@ export default function Home() {
               </select>
             </label>
             <label>
-              Max price per night
+              Max price per night (₹)
               <input
                 type="number"
                 min="0"

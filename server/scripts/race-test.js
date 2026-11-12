@@ -1,12 +1,10 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import { initializeDatabase, mapUser, newId, pool } from '../src/db.js';
-import { signToken } from '../src/middleware.js';
+import { initializeDatabase, newId, pool } from '../src/db.js';
 import { Hotel, Room } from '../src/models/index.js';
-import { createBooking } from '../src/services/bookingService.js';
+import { reserveBooking } from '../src/services/bookingService.js';
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/roomkey?replicaSet=rs0&directConnection=true';
-const API_URL = process.env.API_URL || 'http://localhost:4000/api';
 const CONCURRENT_COUNT = 20;
 
 async function run() {
@@ -18,6 +16,7 @@ async function run() {
 
   // 1. Find or create an active room for the race test
   let hotel = await Hotel.findOne({ isActive: true });
+  let createdHotel = false;
   if (!hotel) {
     hotel = await Hotel.create({
       name: 'Race Test Grand Hotel',
@@ -26,6 +25,7 @@ async function run() {
       amenities: ['Wi-Fi', 'Isolation', 'Atomicity'],
       isActive: true,
     });
+    createdHotel = true;
   }
 
   const room = await Room.create({
@@ -34,84 +34,44 @@ async function run() {
     type: 'Suite',
     description: 'High contention test suite',
     capacity: 2,
-    pricePerNightCents: 15_000, // $150 / night
+    pricePerNightCents: 15_000, // ₹150 / night
     isActive: true,
   });
 
   const checkIn = '2027-10-15';
-  const checkOut = '2027-10-18'; // 3 nights = $450 total (45,000 cents)
-  const initialWalletCents = 100_000; // $1,000
+  const checkOut = '2027-10-18'; // 3 nights = ₹450 total (45,000 paise)
 
-  // 2. Create 20 unique test customers, each funded with $1,000
-  console.log(`Creating ${CONCURRENT_COUNT} funded test customer accounts...`);
-  const testCustomers = [];
+  // 2. Create 20 unique test customers
+  console.log(`Creating ${CONCURRENT_COUNT} test customer accounts...`);
+  const userIds = [];
   for (let i = 1; i <= CONCURRENT_COUNT; i++) {
     const email = `race_user_${Date.now()}_${i}@roomkey.test`;
-    const { rows } = await pool.query(
-      `INSERT INTO users (id, role, email, name, password_hash, wallet_balance)
-       VALUES ($1, 'customer', $2, $3, 'testhash123', $4) RETURNING *`,
-      [newId(), email, `Racer #${i}`, initialWalletCents],
+    const id = newId();
+    await pool.query(
+      `INSERT INTO users (id, role, email, name, password_hash)
+       VALUES ($1, 'customer', $2, $3, 'testhash123')`,
+      [id, email, `Racer #${i}`],
     );
-    const user = mapUser(rows[0]);
-    const token = signToken(user);
-    testCustomers.push({ user, token });
+    userIds.push(id);
   }
 
-  // Check if API server is running
-  let isHttpAvailable = false;
-  try {
-    const health = await fetch(`${API_URL}/health`);
-    if (health.ok) isHttpAvailable = true;
-  } catch {
-    isHttpAvailable = false;
-  }
-
-  console.log(
-    isHttpAvailable
-      ? `API server detected at ${API_URL}. Firing 20 real HTTP requests...`
-      : 'API server not detected on HTTP; testing concurrency via transactional service directly...',
-  );
-
-  // 3. Fire 20 simultaneous booking requests
+  // 3. Fire 20 simultaneous reservation requests
   const startTime = Date.now();
-  let results;
-
-  if (isHttpAvailable) {
-    results = await Promise.allSettled(
-      testCustomers.map(async ({ token }) => {
-        const res = await fetch(`${API_URL}/me/bookings`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            roomId: String(room._id),
-            checkIn,
-            checkOut,
-          }),
+  const results = await Promise.allSettled(
+    userIds.map(async (userId) => {
+      try {
+        const booking = await reserveBooking({
+          userId,
+          roomId: room._id,
+          checkIn,
+          checkOut,
         });
-        const data = await res.json().catch(() => ({}));
-        return { status: res.status, data };
-      }),
-    );
-  } else {
-    results = await Promise.allSettled(
-      testCustomers.map(async ({ user }) => {
-        try {
-          const booking = await createBooking({
-            userId: user._id,
-            roomId: room._id,
-            checkIn,
-            checkOut,
-          });
-          return { status: 201, data: booking };
-        } catch (err) {
-          return { status: err.status || 500, error: err.message };
-        }
-      }),
-    );
-  }
+        return { status: 201, data: booking };
+      } catch (err) {
+        return { status: err.status || 500, error: err.message };
+      }
+    }),
+  );
 
   const durationMs = Date.now() - startTime;
   console.log(`Executed 20 parallel requests in ${durationMs}ms\n`);
@@ -142,35 +102,28 @@ async function run() {
   }
 
   // 5. Verify database state
-  const userIds = testCustomers.map((customer) => customer.user.id);
-  const [bookings, balances] = await Promise.all([
-    pool.query("SELECT * FROM bookings WHERE room_id = $1 AND status = 'confirmed'", [String(room._id)]),
-    pool.query('SELECT wallet_balance FROM users WHERE id = ANY($1::uuid[])', [userIds]),
-  ]);
+  const bookings = await pool.query("SELECT * FROM bookings WHERE room_id = $1 AND status = 'pending'", [String(room._id)]);
   const bookingsInDb = bookings.rows;
-  const debitedUsers = balances.rows.filter((user) => user.wallet_balance < initialWalletCents);
-  const unchargedUsers = balances.rows.filter((user) => user.wallet_balance === initialWalletCents);
 
   console.log('\n=== RACE TEST SUMMARY ===');
   console.log(`Total Requests:          ${CONCURRENT_COUNT}`);
   console.log(`Successful Bookings:     ${successCount}`);
   console.log(`Conflicts Handled (409): ${conflictCount}`);
   console.log(`Other Statuses / Errors: ${otherCount}`);
-  console.log(`Confirmed DB Bookings:   ${bookingsInDb.length}`);
-  console.log(`Debited Wallets:         ${debitedUsers.length}`);
-  console.log(`Untouched Wallets:       ${unchargedUsers.length}`);
+  console.log(`Pending DB Reservations: ${bookingsInDb.length}`);
 
   // Clean up test data
   await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [userIds]);
   await pool.query('DELETE FROM bookings WHERE room_id = $1', [String(room._id)]);
   await Room.deleteOne({ _id: room._id });
+  if (createdHotel) await Hotel.deleteOne({ _id: hotel._id });
 
   await mongoose.disconnect();
   await pool.end();
 
   // 6. Assertions
   if (successCount === 1 && conflictCount === CONCURRENT_COUNT - 1 && otherCount === 0 && bookingsInDb.length === 1) {
-    console.log('\n>>> ASSERTION PASSED: Exactly 1 booking succeeded and 19 returned 409 Conflict. No double-booking occurred. <<<\n');
+    console.log('\n>>> ASSERTION PASSED: Exactly 1 reservation succeeded and 19 returned 409 Conflict. No double-booking occurred. <<<\n');
     process.exit(0);
   } else {
     console.error('\n>>> ASSERTION FAILED: Concurrency check did not match expected counts! <<<\n');

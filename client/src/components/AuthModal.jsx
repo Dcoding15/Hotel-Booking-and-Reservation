@@ -48,7 +48,7 @@ export default function AuthModal({ onClose, onDone }) {
         <p className="muted small" style={{ marginBottom: '1.25rem' }}>
           {isRegister
             ? 'Sign up to book rooms and manage your bookings.'
-            : 'Enter your email and password to access your bookings and wallet.'}
+            : 'Enter your email and password to access your bookings.'}
         </p>
 
         <form onSubmit={submit} style={{ display: 'grid', gap: '0.9rem' }}>

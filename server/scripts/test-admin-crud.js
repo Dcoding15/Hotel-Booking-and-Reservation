@@ -69,14 +69,14 @@ async function runAdminTests() {
       name: 'Ocean View Penthouse',
       type: 'Penthouse',
       capacity: 4,
-      pricePerNightCents: 35_000, // $350
+      pricePerNightCents: 35_000, // ₹350
       description: 'Top floor suite with panoramic sea views.',
       isActive: true,
     }),
   });
   if (addRoom.status !== 201) throw new Error('Add room failed: ' + JSON.stringify(addRoom.data));
   const newRoomId = addRoom.data._id;
-  console.log(`   POST /api/admin/hotels/${newHotelId}/rooms -> Created room "${addRoom.data.name}" ($350/night)`);
+  console.log(`   POST /api/admin/hotels/${newHotelId}/rooms -> Created room "${addRoom.data.name}" (₹350/night)`);
 
   // View rooms
   const listRooms = await req(`/admin/hotels/${newHotelId}/rooms`, { token });
@@ -88,13 +88,13 @@ async function runAdminTests() {
     token,
     body: JSON.stringify({
       name: 'Presidential Ocean Penthouse',
-      pricePerNightCents: 45_000, // $450
+      pricePerNightCents: 45_000, // ₹450
     }),
   });
   if (editRoom.status !== 200 || editRoom.data.pricePerNightCents !== 45_000) {
     throw new Error('Edit room failed: ' + JSON.stringify(editRoom.data));
   }
-  console.log(`   PUT /api/admin/rooms/${newRoomId} -> Updated price to $${editRoom.data.pricePerNightCents / 100}`);
+  console.log(`   PUT /api/admin/rooms/${newRoomId} -> Updated price to ₹${editRoom.data.pricePerNightCents / 100}`);
 
   // Delete room
   const delRoom = await req(`/admin/rooms/${newRoomId}`, { method: 'DELETE', token });
@@ -122,12 +122,11 @@ async function runAdminTests() {
       email: custEmail,
       password: 'Password123!',
       role: 'customer',
-      walletBalance: 25_000, // $250
     }),
   });
   if (addCust.status !== 201) throw new Error('Add customer failed: ' + JSON.stringify(addCust.data));
   const custId = addCust.data._id;
-  console.log(`   POST /api/admin/users (role: customer) -> Created customer "${addCust.data.name}" (${addCust.data.email}, Balance: $${addCust.data.walletBalance / 100})`);
+  console.log(`   POST /api/admin/users (role: customer) -> Created customer "${addCust.data.name}" (${addCust.data.email})`);
 
   // Add Admin Staff
   const staffEmail = `staff_${Date.now()}@test.com`;
@@ -151,13 +150,12 @@ async function runAdminTests() {
     token,
     body: JSON.stringify({
       name: 'Test Customer VIP',
-      walletBalance: 75_000, // $750
     }),
   });
-  if (editCust.status !== 200 || editCust.data.walletBalance !== 75_000) {
+  if (editCust.status !== 200 || editCust.data.name !== 'Test Customer VIP' || 'walletBalance' in editCust.data) {
     throw new Error('Edit customer failed: ' + JSON.stringify(editCust.data));
   }
-  console.log(`   PUT /api/admin/users/${custId} -> Updated wallet balance to $${editCust.data.walletBalance / 100} and name to "${editCust.data.name}"`);
+  console.log(`   PUT /api/admin/users/${custId} -> Updated name to "${editCust.data.name}"`);
 
   // Delete Customer
   const delCust = await req(`/admin/users/${custId}`, { method: 'DELETE', token });

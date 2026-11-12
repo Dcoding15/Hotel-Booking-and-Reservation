@@ -13,7 +13,7 @@ async function req(path, opt = {}) {
 }
 
 async function runE2E() {
-  console.log('=== ROOMKEY END-TO-END VERIFICATION (SIMPLE AUTH) ===\n');
+  console.log('=== ROOMKEY API VERIFICATION (AUTH, RAZORPAY ORDER, CHAT) ===\n');
 
   // 1. Admin login
   console.log('1. Admin Sign-In:');
@@ -37,7 +37,7 @@ async function runE2E() {
   if (regRes.status !== 201 || !regRes.data.token) {
     throw new Error(`Registration failed: ${JSON.stringify(regRes.data)}`);
   }
-  console.log(`   Account created for ${regRes.data.user.name} (${regRes.data.user.email})! Initial Wallet: $${regRes.data.user.walletBalance / 100}`);
+  console.log(`   Account created for ${regRes.data.user.name} (${regRes.data.user.email}).`);
 
   // 3. Simple Customer Login
   console.log('\n3. Simple Customer Sign-In:');
@@ -57,45 +57,36 @@ async function runE2E() {
   const hotelsRes = await req('/hotels');
   if (hotelsRes.status !== 200 || !hotelsRes.data.length) throw new Error('Failed to load hotels');
   const hotel = hotelsRes.data[0];
-  console.log(`   Found Hotel: "${hotel.name}" in ${hotel.city} (${hotel.roomCount} rooms, starting at $${hotel.minPriceCents / 100}/night)`);
+  console.log(`   Found Hotel: "${hotel.name}" in ${hotel.city} (${hotel.roomCount} rooms, starting at ₹${hotel.minPriceCents / 100}/night)`);
 
   const roomsRes = await req(`/hotels/${hotel._id}`);
   if (roomsRes.status !== 200 || !roomsRes.data.rooms.length) throw new Error('Failed to load rooms');
   const room = roomsRes.data.rooms[0];
-  console.log(`   Selected Room: "${room.name}" (${room.type}, sleeps ${room.capacity}, $${room.pricePerNightCents / 100}/night)`);
+  console.log(`   Selected Room: "${room.name}" (${room.type}, sleeps ${room.capacity}, ₹${room.pricePerNightCents / 100}/night)`);
 
-  // 5. Wallet Top-Up
-  console.log('\n5. Wallet Top-Up ($50):');
-  const topupRes = await req('/me/wallet/topup', {
-    method: 'POST',
-    token: customerToken,
-    body: JSON.stringify({ amountCents: 5_000 }), // $50
-  });
-  if (topupRes.status !== 200) throw new Error(`Topup failed: ${JSON.stringify(topupRes.data)}`);
-  console.log(`   Top-up successful! New balance: $${topupRes.data.walletBalance / 100}`);
-
-  // 6. Check booked dates before booking
-  console.log('\n6. Booked Dates Availability Check:');
-  const bookedBefore = await req(`/rooms/${room._id}/booked`);
-  console.log(`   Current booked ranges for room: ${bookedBefore.data.length}`);
-
-  // 7. Create booking for 2 nights
+  // 5. Create a Razorpay order for a future reservation
   const checkIn = '2027-12-01';
-  const checkOut = '2027-12-03'; // 2 nights
-  console.log(`\n7. Booking Room for 2 nights (${checkIn} -> ${checkOut}):`);
-  const bookRes = await req('/me/bookings', {
+  const checkOut = '2027-12-03';
+  console.log('\n5. Create Razorpay Booking Order:');
+  const orderRes = await req('/me/bookings/orders', {
     method: 'POST',
     token: customerToken,
     body: JSON.stringify({ roomId: room._id, checkIn, checkOut }),
   });
-  if (bookRes.status !== 201) throw new Error(`Booking failed: ${JSON.stringify(bookRes.data)}`);
-  const booking = bookRes.data.booking;
-  console.log(`   Booking confirmed! ID: ${booking._id}, Total: $${booking.totalCents / 100}`);
-  console.log(`   Wallet balance after debit: $${bookRes.data.walletBalance / 100}`);
+  if (orderRes.status !== 201 || !orderRes.data.order?.id) {
+    throw new Error(`Razorpay order creation failed: ${JSON.stringify(orderRes.data)}`);
+  }
+  console.log(`   Razorpay order ${orderRes.data.order.id} created for ₹${orderRes.data.order.amount / 100}.`);
+  console.log('   Complete payment in the browser to test signature verification and booking confirmation.');
 
-  // 8. Try double-booking overlapping dates -> Must return 409
-  console.log('\n8. Conflict Detection Check (Attempt overlapping booking):');
-  const conflictRes = await req('/me/bookings', {
+  // 6. Check dates held by the pending reservation
+  console.log('\n6. Pending Reservation Availability Check:');
+  const bookedBefore = await req(`/rooms/${room._id}/booked`);
+  console.log(`   Current booked ranges for room: ${bookedBefore.data.length}`);
+
+  // 7. Try reserving overlapping dates -> Must return 409
+  console.log('\n7. Conflict Detection Check (Attempt overlapping reservation):');
+  const conflictRes = await req('/me/bookings/orders', {
     method: 'POST',
     token: customerToken,
     body: JSON.stringify({ roomId: room._id, checkIn: '2027-12-02', checkOut: '2027-12-04' }),
@@ -103,18 +94,8 @@ async function runE2E() {
   console.log(`   Response status: ${conflictRes.status} (Expected 409: "${conflictRes.data.error}")`);
   if (conflictRes.status !== 409) throw new Error(`Expected 409 conflict, got ${conflictRes.status}`);
 
-  // 9. Cancel booking and verify refund
-  console.log('\n9. Cancellation and Full Refund:');
-  const cancelRes = await req(`/me/bookings/${booking._id}/cancel`, {
-    method: 'POST',
-    token: customerToken,
-  });
-  if (cancelRes.status !== 200) throw new Error(`Cancel failed: ${JSON.stringify(cancelRes.data)}`);
-  console.log(`   Booking cancelled! Refund: $${cancelRes.data.booking.refundCents / 100}`);
-  console.log(`   Restored Wallet Balance: $${cancelRes.data.walletBalance / 100}`);
-
-  // 10. Real-time Socket.io Chat Test (Customer <-> Admin)
-  console.log('\n10. Real-time Customer Support Chat (Socket.io):');
+  // 8. Real-time Socket.io Chat Test (Customer <-> Admin)
+  console.log('\n8. Real-time Customer Support Chat (Socket.io):');
   await new Promise((resolve, reject) => {
     const customerSocket = io(SOCKET_URL, { auth: { token: customerToken } });
     const adminSocket = io(SOCKET_URL, { auth: { token: adminToken } });
@@ -148,7 +129,7 @@ async function runE2E() {
     }, 500);
   });
 
-  console.log('\n>>> ALL SIMPLE AUTH END-TO-END TESTS PASSED SUCCESSFULLY! <<<\n');
+  console.log('\n>>> AUTH, CATALOG, ORDER CREATION, CONFLICT, AND CHAT CHECKS PASSED. PAYMENT COMPLETION REQUIRES CHECKOUT. <<<\n');
 }
 
 runE2E()

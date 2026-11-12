@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
-import { money } from '../utils.js';
 import AuthModal from './AuthModal.jsx';
 
 export default function Header() {
@@ -15,10 +14,7 @@ export default function Header() {
         <Link to="/" className="brand">Roomkey</Link>
         <nav>
           {user?.role === 'customer' && (
-            <>
-              <NavLink to="/bookings" style={{textDecoration: "none"}}>My bookings</NavLink>
-              <NavLink to="/wallet" className="balance" style={{textDecoration: "none"}}>Wallet {money(user.walletBalance)}</NavLink>
-            </>
+            <NavLink to="/bookings" style={{textDecoration: "none"}}>My bookings</NavLink>
           )}
           {user?.role === 'admin' && <NavLink to="/admin">Support desk</NavLink>}
           {user ? (

@@ -34,9 +34,33 @@ export async function initializeDatabase() {
       status text NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'cancelled')),
       cancelled_at timestamptz,
       refund_cents integer NOT NULL DEFAULT 0,
+      payment_order_id text,
+      payment_id text,
+      payment_expires_at timestamptz,
+      refund_id text,
+      refund_status text NOT NULL DEFAULT 'none',
+      refund_idempotency_key text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+    ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
+      CHECK (status IN ('pending', 'confirmed', 'cancelled', 'refund_pending'));
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_order_id text;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_id text;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_expires_at timestamptz;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_id text;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_status text NOT NULL DEFAULT 'none';
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_idempotency_key text;
+    ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_refund_status_check;
+    ALTER TABLE bookings ADD CONSTRAINT bookings_refund_status_check
+      CHECK (refund_status IN ('none', 'initiating', 'pending', 'processed', 'failed'));
+    CREATE UNIQUE INDEX IF NOT EXISTS bookings_payment_order_id_uq
+      ON bookings (payment_order_id) WHERE payment_order_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS bookings_payment_id_uq
+      ON bookings (payment_id) WHERE payment_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS bookings_refund_idempotency_key_uq
+      ON bookings (refund_idempotency_key) WHERE refund_idempotency_key IS NOT NULL;
     CREATE INDEX IF NOT EXISTS bookings_room_dates_idx ON bookings (room_id, status, check_in, check_out);
     CREATE INDEX IF NOT EXISTS bookings_user_created_idx ON bookings (user_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -112,7 +136,6 @@ export function mapUser(row) {
     name: row.name,
     picture: row.picture,
     passwordHash: row.password_hash,
-    walletBalance: row.wallet_balance,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -134,20 +157,11 @@ export function mapBooking(row) {
     status: row.status,
     cancelledAt: row.cancelled_at,
     refundCents: row.refund_cents,
+    paymentStatus: row.payment_id ? 'paid' : row.status === 'pending' ? 'pending' : 'unpaid',
+    paymentExpiresAt: row.payment_expires_at,
+    refundStatus: row.refund_status || 'none',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  };
-}
-
-export function mapWalletTransaction(row) {
-  return {
-    _id: row.id,
-    user: row.user_id,
-    type: row.type,
-    amountCents: row.amount_cents,
-    balanceAfter: row.balance_after,
-    booking: row.booking_id,
-    createdAt: row.created_at,
   };
 }
 

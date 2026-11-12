@@ -1,7 +1,7 @@
-// Change CURRENCY to match your market; the server stores integer cents.
-const CURRENCY = 'USD';
-export const money = (cents) =>
-  new Intl.NumberFormat(undefined, { style: 'currency', currency: CURRENCY }).format((cents || 0) / 100);
+// The server stores money amounts as integer paise.
+const CURRENCY = 'INR';
+export const money = (paise) =>
+  new Intl.NumberFormat(undefined, { style: 'currency', currency: CURRENCY }).format((paise || 0) / 100);
 
 const pad = (n) => String(n).padStart(2, '0');
 export const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

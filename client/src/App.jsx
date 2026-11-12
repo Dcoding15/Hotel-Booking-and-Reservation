@@ -4,7 +4,6 @@ import Header from './components/Header.jsx';
 import ChatWidget from './components/ChatWidget.jsx';
 import Home from './pages/Home.jsx';
 import HotelPage from './pages/HotelPage.jsx';
-import Wallet from './pages/Wallet.jsx';
 import Bookings from './pages/Bookings.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 
@@ -23,7 +22,6 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/hotels/:hotelId" element={<HotelPage />} />
-          <Route path="/wallet" element={<Guard role="customer"><Wallet /></Guard>} />
           <Route path="/bookings" element={<Guard role="customer"><Bookings /></Guard>} />
           <Route path="/admin/login" element={<Navigate to="/" replace />} />
           <Route path="/admin" element={<Guard role="admin"><AdminDashboard /></Guard>} />

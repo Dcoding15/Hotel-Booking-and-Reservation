@@ -45,7 +45,7 @@ router.get('/hotels/:hotelId', async (req, res) => {
   }));
 });
 
-// Booked nights for the calendar (Redis, 30s; invalidated on every booking/cancel).
+// Booked nights for the calendar (Redis, 30s; invalidated on reservation and payment changes).
 router.get('/rooms/:roomId/booked', async (req, res) => {
   const { roomId } = req.params;
   if (!mongoose.isValidObjectId(roomId)) {
@@ -55,7 +55,9 @@ router.get('/rooms/:roomId/booked', async (req, res) => {
   res.json(await cached(`room:${roomId}:booked`, 30, async () => {
     const { rows } = await pool.query(
       `SELECT check_in, check_out FROM bookings
-       WHERE room_id = $1 AND status = 'confirmed' AND check_out > $2 ORDER BY check_in`,
+       WHERE room_id = $1
+         AND (status = 'confirmed' OR (status = 'pending' AND payment_expires_at > now()))
+         AND check_out > $2 ORDER BY check_in`,
       [roomId, ymd(todayUTC())],
     );
     return rows.map((b) => ({ checkIn: String(b.check_in), checkOut: String(b.check_out) }));
