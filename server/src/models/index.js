@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 const { Schema } = mongoose;
 
+// One document represents a hotel in the MongoDB catelog.
 export const Hotel = mongoose.model('Hotel', new Schema({
   name: { type: String, required: true },
   city: String,

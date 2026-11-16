@@ -13,6 +13,7 @@ export const publicUser = (u) => ({
   picture: u.picture,
 });
 
+// validate and insert user data and returns to login page
 router.post('/register', async (req, res) => {
   const { email, password, name } = req.body || {};
   const cleanEmail = String(email || '').toLowerCase().trim();
@@ -59,6 +60,7 @@ async function login(email, password) {
   return user;
 }
 
+// validates email and password and returns auth token and user profile if valid
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!String(email || '').trim() || !String(password || '')) {
@@ -68,6 +70,7 @@ router.post('/login', async (req, res) => {
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
+// identify current logged-in user and fetch user details from postgreSQL
 router.get('/me', auth(), async (req, res) => {
   const result = await pool.query('SELECT * FROM users WHERE id = $1', [req.auth.id]);
   const user = mapUser(result.rows[0]);

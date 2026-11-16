@@ -23,6 +23,7 @@ const publicAdminUser = (user) => ({
   updatedAt: user.updatedAt,
 });
 
+// list all hotels (both active and inactive)
 router.get('/hotels', async (_req, res) => {
   const [hotels, stats] = await Promise.all([
     Hotel.find().sort({ createdAt: -1 }).lean(),
@@ -38,6 +39,7 @@ router.get('/hotels', async (_req, res) => {
   })));
 });
 
+// create a new hotel
 router.post('/hotels', async (req, res) => {
   const data = pick(req.body, HOTEL_FIELDS);
   if (!data.name?.trim()) throw new HttpError(400, 'Hotel name is required');
@@ -47,6 +49,7 @@ router.post('/hotels', async (req, res) => {
   res.status(201).json(hotel);
 });
 
+// update an existing hotel's details
 router.put('/hotels/:id', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid hotel ID');
   const data = pick(req.body, HOTEL_FIELDS);
@@ -57,6 +60,7 @@ router.put('/hotels/:id', async (req, res) => {
   res.json(hotel);
 });
 
+// delete a hotel and all rooms belongs to it
 router.delete('/hotels/:id', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid hotel ID');
   const hotel = await Hotel.findByIdAndDelete(req.params.id);
@@ -66,11 +70,13 @@ router.delete('/hotels/:id', async (req, res) => {
   res.json({ ok: true, message: `Hotel "${hotel.name}" and its rooms were deleted` });
 });
 
+// display all rooms belonging to specific hotel sorted by price
 router.get('/hotels/:hotelId/rooms', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.hotelId)) throw new HttpError(400, 'Invalid hotel ID');
   res.json(await Room.find({ hotel: req.params.hotelId }).sort({ pricePerNightCents: 1 }).lean());
 });
 
+// add new room to specific hotels
 router.post('/hotels/:hotelId/rooms', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.hotelId)) throw new HttpError(400, 'Invalid hotel ID');
   const hotel = await Hotel.findById(req.params.hotelId);
@@ -85,6 +91,7 @@ router.post('/hotels/:hotelId/rooms', async (req, res) => {
   res.status(201).json(room);
 });
 
+// update specific room
 router.put('/rooms/:id', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid room ID');
   const data = pick(req.body, ROOM_FIELDS);
@@ -94,6 +101,7 @@ router.put('/rooms/:id', async (req, res) => {
   res.json(room);
 });
 
+// delete specific room
 router.delete('/rooms/:id', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid room ID');
   const room = await Room.findByIdAndDelete(req.params.id);
@@ -102,6 +110,7 @@ router.delete('/rooms/:id', async (req, res) => {
   res.json({ ok: true, message: `Room "${room.name}" was deleted` });
 });
 
+// display all users
 router.get('/users', async (req, res) => {
   const role = ['admin', 'customer'].includes(req.query.role) ? req.query.role : null;
   const result = await pool.query(
@@ -112,6 +121,7 @@ router.get('/users', async (req, res) => {
   res.json(result.rows.map((row) => publicAdminUser(mapUser(row))));
 });
 
+// create new user directly from admin portal
 router.post('/users', async (req, res) => {
   const { name, email, password, role } = req.body || {};
   const cleanEmail = String(email || '').toLowerCase().trim();
@@ -141,6 +151,7 @@ router.post('/users', async (req, res) => {
   }
 });
 
+// update user info
 router.put('/users/:id', async (req, res) => {
   if (!isUuid(req.params.id)) throw new HttpError(400, 'Invalid user ID');
   const { name, email, password, role } = req.body || {};
@@ -170,6 +181,7 @@ router.put('/users/:id', async (req, res) => {
   }
 });
 
+// delete user account
 router.delete('/users/:id', async (req, res) => {
   if (!isUuid(req.params.id)) throw new HttpError(400, 'Invalid user ID');
   if (req.params.id === req.auth.id) throw new HttpError(400, 'You cannot delete your own admin account');
@@ -178,10 +190,12 @@ router.delete('/users/:id', async (req, res) => {
   res.json({ ok: true, message: `User "${rows[0].name || rows[0].email}" was deleted` });
 });
 
+// cancel any customer booking by admin
 router.post('/bookings/:id/cancel', async (req, res) => {
   res.json(await adminCancelBooking({ bookingId: req.params.id }));
 });
 
+// display 200 booking info
 router.get('/bookings', async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT b.*, u.name AS user_name, u.email AS user_email
